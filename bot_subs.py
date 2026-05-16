@@ -33,6 +33,10 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 _data_lock = asyncio.Lock()
 
+# Cache for invite link
+CACHED_INVITE_LINK = None
+INVITE_LINK_EXPIRY = None
+
 
 def load_user_data() -> Dict:
     try:
@@ -75,21 +79,30 @@ async def check_subscription(client: httpx.AsyncClient, user_id: int) -> bool:
 
 
 async def generate_private_invite(client: httpx.AsyncClient) -> str:
+    global CACHED_INVITE_LINK, INVITE_LINK_EXPIRY
+    
+    # Check if we have a cached link that's still valid
+    if CACHED_INVITE_LINK and INVITE_LINK_EXPIRY and datetime.now().timestamp() < INVITE_LINK_EXPIRY:
+        logger.info("Using cached invite link")
+        return CACHED_INVITE_LINK
+    
     try:
         response = await client.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
             json={
                 "chat_id": PRIVATE_CHANNEL_ID,
-                "member_limit": 1,
+                "member_limit": None,
                 "creates_join_request": False,
-                "expire_date": int(datetime.now().timestamp() + 3600)
+                "expire_date": int(datetime.now().timestamp() + 86400)
             },
             timeout=10.0
         )
         data = response.json()
         if data.get("ok"):
-            logger.info("Successfully generated invite link")
-            return data["result"]["invite_link"]
+            CACHED_INVITE_LINK = data["result"]["invite_link"]
+            INVITE_LINK_EXPIRY = datetime.now().timestamp() + 86400
+            logger.info("Successfully generated and cached invite link")
+            return CACHED_INVITE_LINK
         logger.error(f"Error generating invite link: {data}")
         return ""
     except Exception as e:
@@ -150,7 +163,7 @@ class SubscriptionBot:
                 await update.message.reply_text(
                     f"🎉 *Congratulations {safe_name}\\!*\n\n"
                     "You now have access to our exclusive private channel\\!\n\n"
-                    "⚠️ _This invite is valid for 1 hour and can only be used once\\._\n\n"
+                    "⚠️ _This invite is valid for 24 hours\\._\n\n"
                     "🎯 _Click the button below to join\\!_",
                     parse_mode=ParseMode.MARKDOWN_V2,
                     reply_markup=InlineKeyboardMarkup(keyboard)
@@ -200,7 +213,7 @@ class SubscriptionBot:
                             f"✨ *Verification Successful\\!*\n\n"
                             f"Welcome aboard, {safe_name}\\! 🎉\n\n"
                             "⏳ _Your invite is ready_\n"
-                            "👤 _Limited to one use_\n\n"
+                            "👤 _Unlimited uses_\n\n"
                             "🎯 _Click the button below to join\\!_",
                             parse_mode=ParseMode.MARKDOWN_V2,
                             reply_markup=InlineKeyboardMarkup(keyboard)
